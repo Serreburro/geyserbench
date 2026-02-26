@@ -5,7 +5,7 @@ GeyserBench benchmarks the speed and reliability of Solana gRPC-compatible data 
 ## Highlights
 
 - Benchmark multiple feeds at once (Yellowstone, aRPC, Thor, Shredstream, Jetstream, and custom gRPC endpoints)
-- Track first-detection share, latency percentiles (P50/P95/P99), valid transaction counts, and backfill events
+- Track first-detection share, latency percentiles (P50/P95/P99), valid signature counts, and backfill events
 - Stream results to the SolStack backend for shareable reports, or keep runs local with a single flag
 - Generate a ready-to-edit TOML config on first launch; supply auth tokens and endpoints without code changes
 
@@ -66,9 +66,13 @@ kind = "yellowstone"
 ```
 
 - `config.transactions` sets how many signatures to evaluate (backend streaming automatically disables itself for extremely large runs).
-- `config.account` is the pubkey monitored for transactions during the benchmark.
+- `config.account` is the pubkey monitored during the benchmark (account subscriptions are used where provider APIs support them).
 - `config.commitment` accepts `processed`, `confirmed`, or `finalized`.
 - Repeat `[[endpoint]]` blocks for each feed. Supported `kind` values: `yellowstone`, `arpc`, `thor`, `shredstream`, `shreder`, and `jetstream`. `x_token` is optional.
+
+Provider note:
+- `yellowstone` and `jetstream` use account subscriptions and consume `txn_signature` from account updates.
+- `arpc`, `thor`, `shredstream`, and `shreder` expose transaction-oriented streams in their current APIs, so they continue using transaction subscriptions.
 
 ## CLI Options
 

@@ -1,9 +1,8 @@
 use futures::{SinkExt, channel::mpsc::unbounded};
 use futures_util::stream::StreamExt;
-use solana_pubkey::Pubkey;
 use std::{collections::HashMap, error::Error, sync::atomic::Ordering};
 use tokio::task;
-use tracing::{Level, info};
+use tracing::{Level, info, warn};
 
 use crate::{
     config::{Config, Endpoint},
@@ -56,7 +55,6 @@ async fn process_jetstream_endpoint(
         progress,
     } = context;
     let signature_sender = signature_tx;
-    let account_pubkey = config.account.parse::<Pubkey>()?;
     let endpoint_name = endpoint.name.clone();
     let mut log_file = if tracing::enabled!(Level::TRACE) {
         Some(open_log_file(&endpoint_name)?)
@@ -73,20 +71,19 @@ async fn process_jetstream_endpoint(
         .unwrap_or_else(|err| fatal_connection_error(&endpoint_name, err));
     info!(endpoint = %endpoint_name, "Connected");
 
-    let mut transactions: HashMap<String, jetstream::SubscribeRequestFilterTransactions> =
-        HashMap::new();
-    transactions.insert(
+    let mut accounts: HashMap<String, jetstream::SubscribeRequestFilterAccounts> = HashMap::new();
+    accounts.insert(
         String::from("account"),
-        jetstream::SubscribeRequestFilterTransactions {
-            account_exclude: vec![],
-            account_include: vec![],
-            account_required: vec![config.account.clone()],
+        jetstream::SubscribeRequestFilterAccounts {
+            account: vec![config.account.clone()],
+            owner: vec![],
+            filters: vec![],
         },
     );
 
     let request = jetstream::SubscribeRequest {
-        transactions,
-        accounts: HashMap::new(),
+        transactions: HashMap::new(),
+        accounts,
         ping: None,
     };
 
@@ -108,18 +105,20 @@ async fn process_jetstream_endpoint(
 
             message = stream.next() => {
                 let Some(Ok(msg)) = message else { continue };
-                let Some(jetstream::subscribe_update::UpdateOneof::Transaction(tx)) = msg.update_oneof else { continue };
-                let Some(tx_info) = &tx.transaction else { continue };
-
-                let has_account = tx_info
-                    .account_keys
-                    .iter()
-                    .any(|key| key.as_slice() == account_pubkey.as_ref());
-                if !has_account { continue }
+                let Some(jetstream::subscribe_update::UpdateOneof::Account(account_update)) = msg.update_oneof else { continue };
+                let Some(account_info) = &account_update.account else { continue };
+                let Some(txn_signature) = account_info.txn_signature.as_ref() else {
+                    warn!(
+                        endpoint = %endpoint_name,
+                        slot = account_update.slot,
+                        "Missing txn_signature in account update"
+                    );
+                    continue;
+                };
 
                 let wallclock = get_current_timestamp();
                 let elapsed = start_instant.elapsed();
-                let signature = bs58::encode(&tx_info.signature).into_string();
+                let signature = bs58::encode(txn_signature).into_string();
 
                 if let Some(file) = log_file.as_mut() {
                     write_log_entry(file, wallclock, &endpoint_name, &signature)?;
